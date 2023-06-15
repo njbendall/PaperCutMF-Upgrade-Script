@@ -46,7 +46,8 @@ Start-BitsTransfer -Source $pcmfCDNUrl -Destination (Join-Path -Path $scriptPath
 if (Test-Path -Path (Join-Path -Path $scriptPath -ChildPath $pcmfInstallerName) -PathType Leaf) {
     # Run PaperCut Upgrade
     Write-LogEntry -Data "Running PaperCut Upgrade"
-    Start-Process -FilePath (Join-Path -Path $scriptPath -ChildPath $pcmfInstallerName) -ArgumentList "/VERYSILENT"
+    $installerProcess = Start-Process -FilePath (Join-Path -Path $scriptPath -ChildPath $pcmfInstallerName) -ArgumentList "/VERYSILENT"
+    $installerProcess | Wait-Process
 } else {
     Write-LogEntry -Data "Error: Failed to download the upgrade file."
 }

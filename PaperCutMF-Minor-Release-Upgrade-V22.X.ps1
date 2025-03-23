@@ -1,11 +1,12 @@
 # Variables
-$scriptPath = Split-Path -Parent $MyInvocation.MyCommand.Path
-$pcmfBackupLocation = "C:\EDUIT"
-$logFilePath = Join-Path -Path $scriptPath -ChildPath "papercut-upgrade.log"
-$pcmfCDNUrl = "https://cdn.papercut.com/web/products/ng-mf/installers/mf/22.x/pcmf-setup-22.1.1.66714.exe"
-$pcmfInstallerName = [regex]::Match($pcmfCDNUrl, '/([^/]+)$').Groups[1].Value
+$pcmfBackupLocation = $env:BackupPCMFDB_Location
+$logFilePath = "$($env:HSMIT_LogFolderLocation)\papercut-upgrade.log"
+$pcmfCDNUrl = "http://cdn.hsho.me/pcmf/"
+$versionToInstall = $env:PCMF_TargetVersion
+$pcmfInstallerName = "$($versionToInstall).exe"
 $pcmfOldVersion = Get-ItemProperty -Path 'HKLM:\SOFTWARE\PaperCut MF' -Name 'Version' | Select-Object -ExpandProperty 'Version'
 $pcmfInstallPath = Get-ItemProperty -Path 'HKLM:\SOFTWARE\PaperCut MF' -Name 'InstallPath' | Select-Object -ExpandProperty 'InstallPath'
+$backupFolder = Join-Path -Path "$($pcmfBackupLocation)\PaperCut-Backup\$($pcmfOldVersion)" -ChildPath "PaperCut MF"
 
 # Logging and Console Printing 
 function Write-LogEntry {
@@ -18,12 +19,35 @@ function Write-LogEntry {
     $logEntry | Out-File -FilePath $logFilePath -Append
 }
 
+# Create directories if they are not present in C:\
+if (-not (Test-Path "C:\HSMIT")) {
+    New-Item -ItemType Directory -Path "C:\HSMIT"
+    Write-LogEntry -Data "Created C:\HSMIT."
+}
+
+if (-not (Test-Path "C:\HSMIT\PaperCut-Upgrade-Files")) {
+    New-Item -ItemType Directory -Path "C:\HSMIT\PaperCut-Upgrade-Files"
+    Write-LogEntry -Data "Created C:\HSMIT\PaperCut-Upgrade-Files."
+}
+
+if (-not (Test-Path "C:\HSMIT\PaperCut-Upgrade-Logs")) {
+    New-Item -ItemType Directory -Path "C:\HSMIT\PaperCut-Upgrade-Logs"
+    Write-LogEntry -Data "Created C:\HSMIT\PaperCut-Upgrade-Logs."
+}
+
+if (-not (Test-Path "C:\HSMIT\PaperCut-Backup")) {
+    New-Item -ItemType Directory -Path "C:\HSMIT\PaperCut-Backup"
+    Write-LogEntry -Data "Created C:\HSMIT\PaperCut-Backup."
+}
+
+# Clear Old Backups
+Get-ChildItem -Path "C:\HSMIT\PaperCut-Backup" -Recurse | Remove-Item -Force -Recurse
+
 # Stop PaperCut Server
 Write-LogEntry -Data "Stopping PaperCut Server"
 Stop-Service -Name "PaperCut Application Server"
 
 # Create Backup Folder
-$backupFolder = Join-Path -Path "$($pcmfBackupLocation)\PaperCut-Backup\$($pcmfOldVersion)" -ChildPath "PaperCut MF"
 if (!(Test-Path -Path $backupFolder -PathType Container)) {
     Write-LogEntry -Data "Creating Backup Folder: $backupFolder"
     New-Item -Path $backupFolder -ItemType Directory
@@ -33,23 +57,33 @@ if (!(Test-Path -Path $backupFolder -PathType Container)) {
 
 # Copy the installation folder to the backup folder
 Write-LogEntry -Data "Copying installation folder to backup: $pcmfInstallPath to $backupFolder"
-Copy-Item -Path $pcmfInstallPath -Destination $backupFolder -Recurse -Force
 
-# Backup Complete
+#Copy-Item -Path $pcmfInstallPath -Destination $backupFolder -Recurse -Force
+
+Compress-Archive -Path $pcmfInstallPath -DestinationPath $backupFolder -CompressionLevel Fastest
+
 Write-LogEntry -Data "Backup complete and saved to: $backupFolder"
 
 # Download the file
-Write-LogEntry -Data "Downloading the upgrade file"
-Start-BitsTransfer -Source $pcmfCDNUrl -Destination (Join-Path -Path $scriptPath -ChildPath $pcmfInstallerName)
-
-# Check if the file was downloaded successfully
-if (Test-Path -Path (Join-Path -Path $scriptPath -ChildPath $pcmfInstallerName) -PathType Leaf) {
-    # Run PaperCut Upgrade
-    Write-LogEntry -Data "Running PaperCut Upgrade"
-    $installerProcess = Start-Process -FilePath (Join-Path -Path $scriptPath -ChildPath $pcmfInstallerName) -ArgumentList "/VERYSILENT"
-    $installerProcess | Wait-Process
-} else {
-    Write-LogEntry -Data "Error: Failed to download the upgrade file."
+Write-LogEntry -Data "Downloading the upgrade file from $($pcmfCDNUrl)$($pcmfInstallerName) to C:\HSMIT\PaperCut-Upgrade-Files\$($pcmfInstallerName)"
+try {
+    Start-BitsTransfer -Source "$($pcmfCDNUrl)$($pcmfInstallerName)" -Destination "C:\HSMIT\PaperCut-Upgrade-Files\$($pcmfInstallerName)"
+}
+catch {
+    Write-LogEntry -Data "Download Failed."
+    exit
+}
+finally {
+    # Check if the file was downloaded successfully
+    if (Test-Path -Path "C:\HSMIT\PaperCut-Upgrade-Files\$($pcmfInstallerName)" -PathType Leaf) {
+        # Run PaperCut Upgrade
+        Write-LogEntry -Data "Running PaperCut Upgrade"
+        Start-Process -FilePath "C:\HSMIT\PaperCut-Upgrade-Files\$($pcmfInstallerName)" -ArgumentList "/VERYSILENT"
+        Write-LogEntry -Data "Beginning sleep period"
+        Start-Sleep -Seconds $env:SleepTime
+    } else {
+        Write-LogEntry -Data "Error: Failed to download the upgrade file."
+    }
 }
 
 # Start PaperCut Server
